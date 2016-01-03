@@ -1,0 +1,7 @@
+#!/bin/sh
+
+export PATH=/sbin:/bin
+
+insmod ./driver_main.ko
+ifconfig vd0 local0
+ifconfig vd1 local1

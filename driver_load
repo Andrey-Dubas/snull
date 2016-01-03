@@ -1,0 +1,22 @@
+#!/bin/sh
+
+export PATH=/sbin:/bin
+
+# create a fekw ehternet interface
+# modprobe dummy
+# ip link set name eth10 dev dummy0
+# ifconfig eth0 hw ether 00:22:22:ff:ff:ff
+
+
+# route add -net snullnet0 dev sn0
+
+
+#ip tuntap add dev vd0 mode tap
+#ip link ls dev vd0
+
+#ip tuntap add dev vd1 mode tap
+#ip link ls dev vd1
+
+insmod ./driver_main.ko
+ifconfig vd0 local0
+ifconfig vd1 local1
