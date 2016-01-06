@@ -18,5 +18,34 @@ export PATH=/sbin:/bin
 #ip link ls dev vd1
 
 insmod ./driver_main.ko
-ifconfig vd0 local0
-ifconfig vd1 local1
+ifconfig vd0 local0/24
+ifconfig vd1 local1/24
+
+
+
+l0=192.168.10.1
+l1=192.168.11.2
+
+r0=192.168.10.2
+r1=192.168.11.1
+
+mac0=11:11:11:11:11:11
+mac1=22:22:22:22:22:22
+
+iptables -t nat -A POSTROUTING -s $l0 -d $r1 -j SNAT --to-source $r0 
+iptables -t nat -A PREROUTING -d $r0 -j DNAT --to-destination $l0 
+
+iptables -t nat -A POSTROUTING -s $l1 -d $r0 -j SNAT --to-source $r1 
+iptables -t nat -A PREROUTING -d $r1 -j DNAT --to-destination $l1 
+
+ifconfig vd0 hw ether $mac0
+ifconfig vd1 hw ether $mac1
+
+ip link set vd0 address $mac0
+ip link set vd1 address $mac1
+
+ip route add $r1 dev vd0 
+arp -i vd0 -s $r1 $mac1
+
+ip route add $r0 dev vd1 
+arp -i vd1 -s $r0 $mac0

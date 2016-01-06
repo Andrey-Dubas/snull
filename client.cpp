@@ -22,7 +22,7 @@ int main()
     */
 
     sockaddr_in sockaddr;
-    sockaddr.sin_addr.s_addr = inet_addr("192.168.20.1");
+    sockaddr.sin_addr.s_addr = inet_addr("192.168.10.1");
     sockaddr.sin_port = htons(11111);
     sockaddr.sin_family = AF_INET;
     

@@ -61,6 +61,9 @@ typedef struct driver_device_private_data
 	driver_device_packet_t *tx_end;
 	driver_device_packet_t *rx_end;
 
+	driver_device_packet_t *tx_packet;
+	driver_device_packet_t *rx_packet;
+
 	struct sk_buff *skb;
 	spinlock_t lock;
 } driver_device_private_data_t;
@@ -90,7 +93,10 @@ int driver_device_close (net_device_t *dev);
 int driver_device_start_xmit(sk_buff_t* skb, net_device_t* dev);
 int driver_device_hardware_tx(char *data, int len, net_device_t *dev);
 int driver_device_interrupt_regular(int irq, void *dev_id, struct pt_regs *regs);
+int driver_device_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd);
+int driver_device_set_mac_address(struct net_device *dev, void *addr);
 driver_device_packet_t * driver_device_get_message(net_device_t *dev);
+
 
 int driver_device_header_hard(sk_buff_t *skb, net_device_t *dev,
 		unsigned short type, void *daddr, void *saddr, unsigned len);
@@ -98,8 +104,13 @@ int driver_device_rebuild_header(sk_buff_t *skb);
 
 void driver_device_receive(net_device_t * dev, driver_device_packet_t *pkt);
 
+// queue private data version
+/*
 driver_device_packet_t * enqueue_packet(driver_device_packet_t * begin, driver_device_packet_t * end, char * data, int len);
 driver_device_packet_t * dequeue_packet(driver_device_packet_t * begin, driver_device_packet_t * end);
+driver_device_packet_t * enqueue_packet(driver_device_packet_t * begin, char * data, int len);
+driver_device_packet_t * dequeue_packet(driver_device_packet_t * begin);
+*/
 
 driver_device_packet_t * enqueue_tx(
 		  driver_device_private_data_t * private_data
@@ -150,7 +161,7 @@ static const struct net_device_ops net_device_operations =
     headers and all) is contained in a socket buffer ( sk_buff ) structure.
     */
 
-    //.ndo_hard_header = driver_device_header_hard,
+    // .ndo_hard_header = driver_device_header_hard,
     /*
      * Function (called before hard_start_xmit) that builds the hardware header from
      * the src and dest hardware addresses that were previously retrieved; its
@@ -165,7 +176,9 @@ static const struct net_device_ops net_device_operations =
 /*
     .ndo_get_stats = vboxNetAdpGetStats,
 */
-    .ndo_set_config = driver_device_config
+    .ndo_set_config = driver_device_config,
+    .ndo_set_mac_address = driver_device_set_mac_address,
+    .ndo_do_ioctl = driver_device_ioctl
 };
 
 //-------------------------------------------------------------
@@ -258,7 +271,7 @@ int driver_device_packet_pool_setup(net_device_t *dev)
 	driver_device_private_data_t *priv_data = (driver_device_private_data_t*) netdev_priv(dev);
 	driver_device_packet_t *next;
 
-	printk(KERN_DEBUG "driver_device_packet_pool_setup");
+	printk(KERN_DEBUG "driver_device_packet_pool_setup\n");
 
 
 	//----------------------------------------------------------------
@@ -305,6 +318,18 @@ int driver_device_packet_pool_setup(net_device_t *dev)
 	priv_data->tx_end->next = priv_data->tx_begin;
 	priv_data->rx_end->next = priv_data->rx_begin;
 
+	return 0;
+}
+
+int driver_device_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
+{
+	printk(KERN_INFO "driver_device_ioctl\n");
+	return 0;
+}
+
+int driver_device_set_mac_address(struct net_device *dev, void *addr)
+{
+	printk(KERN_INFO "driver_device_set_mac_address\n");
 	return 0;
 }
 
@@ -359,25 +384,32 @@ int driver_device_interrupt_regular(int irq, void * dev_id, struct pt_regs * reg
 	// driver_device_source_ip_address_to_string(dev->nh, s_ip_str_addr);
 	// driver_device_destination_ip_address_to_string(dev->nh, d_ip_str_addr);
 
+	/*
 	if (status_word & DEVICE_RX_INTERRUPT)
 	{
-		printk("DEVICE_RX_INTERRUPT\n");
+		printk(KERN_DEBUG "DEVICE_RX_INTERRUPT\n");
 		// printf("RX interrupt: source: %s, destination: %s\n", s_ip_str_addr, d_ip_str_addr);
-		pkt = device_data->rx_begin;
+		pkt = dequeue_rx(device_data);
 		if (pkt)
 		{
-			printk("receives a packet\n");
-			device_data->rx_begin = pkt->next;
+			printk(KERN_DEBUG "receives a packet\n");
 			driver_device_receive(dev, pkt);
 		}
 
 	}
+	*/
+
 	if (status_word & DEVICE_TX_INTERRUPT)
 	{
 		// printf("TX interrupt: source: %s, destination: %s\n", s_ip_str_addr, d_ip_str_addr);
 		// device_data->stats.tx_packets++;
 		// device_data->stats.tx_bytes += device_data->skb->len
-		printk("DEVICE_TX_INTERRUPT\n");
+		printk(KERN_DEBUG "DEVICE_TX_INTERRUPT\n");
+		pkt = dequeue_tx(device_data);
+		if (pkt)
+		{
+			// TODO: ?
+		}
 		dev_kfree_skb(device_data->skb); // delete the skb
 	}
 
@@ -396,10 +428,10 @@ int driver_device_interrupt_regular(int irq, void * dev_id, struct pt_regs * reg
 
 void driver_device_receive(net_device_t * dev, driver_device_packet_t *pkt)
 {
+	printk(KERN_INFO "driver_device_receive\n");
 	sk_buff_t * skb;
 	// driver_device_private_data_t * device_data = netdev_priv(dev);
 	skb = dev_alloc_skb(pkt->len + 2);
-	printk(KERN_INFO "driver_device_receive");
 	if (!skb)
 	{
 		printk(KERN_NOTICE "device lacks on memory - packet dropped\n");
@@ -425,6 +457,11 @@ void driver_device_receive(net_device_t * dev, driver_device_packet_t *pkt)
 	if (congestion_status == NET_RX_DROP)
 	{
 		printk(KERN_WARNING "a packet has been dropped (netif_rx)\n");
+	}
+	else
+	{
+		printk(KERN_WARNING "\n");
+		printk(KERN_WARNING "\n");
 	}
 out:
 	return;
@@ -508,17 +545,17 @@ int driver_device_start_xmit(sk_buff_t* skb, net_device_t* dev)
 	return 0;
 }
 
-int driver_device_hardware_tx(char *data, int len, net_device_t *dev)
+int driver_device_hardware_tx(char *data, int len, net_device_t *src_dev)
 {
 	struct iphdr *ip_header;
-	net_device_t* dest;
+	net_device_t* dest_dev;
 	int dest_index;
-	driver_device_private_data_t *priv_data;
+	driver_device_private_data_t *dest_priv_data, *src_priv_data;
 	u32 *source_addr, *dest_addr;
 
 	if (len < sizeof(struct ethhdr) + sizeof(struct iphdr))
 	{
-		printk(KERN_ERR "something is fucked up, the whole ip packet size is %i", len);
+		printk(KERN_ERR "the whole ip packet size is %i", len);
 		return -1;
 	}
 
@@ -536,21 +573,28 @@ int driver_device_hardware_tx(char *data, int len, net_device_t *dev)
 	 * some other stuff
 	 **/
 
-	dest_index =  driver_interface_loop[0] == dev? 1 : 0;
-	dest = driver_interface_loop[dest_index];
+	src_priv_data = netdev_priv(src_dev);
+	if (enqueue_tx(src_priv_data, data, len))
+	{
+		src_priv_data->status |= DEVICE_TX_INTERRUPT;
+		driver_device_interrupt_regular(0, src_dev, NULL);
+	}
 
-	priv_data = netdev_priv(dest);
-	if(enqueue_tx(priv_data, data, len))
+	dest_index =  driver_interface_loop[0] == src_dev? 1 : 0;
+	dest_dev = driver_interface_loop[dest_index];
+	dest_priv_data = netdev_priv(dest_dev);
+	if(enqueue_rx(dest_priv_data, data, len))
 	{
 		// mocking an interrupt
 		// packet picking happens there
-		priv_data->status |= DEVICE_RX_INTERRUPT;
-		driver_device_interrupt_regular(0, dev, NULL);
+		dest_priv_data->status |= DEVICE_RX_INTERRUPT;
+		driver_device_interrupt_regular(0, dest_dev, NULL);
 	}
+
 	return 0;
 }
 
-
+/*
 driver_device_packet_t * enqueue_packet(driver_device_packet_t * begin, driver_device_packet_t * end, char * data, int len)
 {
 	driver_device_packet_t * to_return;
@@ -585,33 +629,113 @@ driver_device_packet_t * dequeue_packet(driver_device_packet_t * begin, driver_d
 	printk(KERN_INFO "dequeue_packet end\n");
 	return end;
 }
+*/
+
+
+driver_device_packet_t * enqueue_packet(
+		  driver_device_packet_t ** packet_pointer_ref
+		, char * data, int len, spinlock_t * lock)
+{
+	unsigned long flags;
+	spin_lock_irqsave(lock, flags);
+	if (*packet_pointer_ref)
+	{
+		printk(KERN_WARNING "enqueue_packet: packet already exists\n");
+		return NULL;
+	}	
+	*packet_pointer_ref = kmalloc(sizeof(driver_device_packet_t), GFP_KERNEL);
+	(*packet_pointer_ref)->data = data;
+	(*packet_pointer_ref)->len = len;
+	spin_unlock_irqrestore(lock, flags);
+	return *packet_pointer_ref;
+}
 
 driver_device_packet_t * enqueue_tx(
 		  driver_device_private_data_t * private_data
 		, char * data, int len)
 {
-	printk(KERN_INFO "enqueue_tx: begin: %p, end: %p\n", (void*)private_data->tx_begin, (void*)private_data->tx_end);
-	return enqueue_packet(private_data->tx_begin, private_data->tx_end, data, len);
+	//printk(KERN_INFO "enqueue_tx: begin: %p, end: %p\n", (void*)private_data->tx_begin, (void*)private_data->tx_end);
+	//return enqueue_packet(private_data->tx_begin, private_data->tx_end, data, len);
+	
+	// if (private_data->tx_packet)
+	// {
+	// 	printk(KERN_WARNING "enqueue_tx: packet already exists\n");
+	// 	return NULL;
+	// }	
+	// private_data->tx_packet = kmalloc(sizeof(driver_device_packet_t), GFP_KERNEL);
+	// private_data->tx_packet->data = data;
+	// private_data->tx_packet->len= len;
+	// return private_data->tx_packet;
+
+	return enqueue_packet(&private_data->tx_packet, data, len, &private_data->lock);
 }
 
 driver_device_packet_t * enqueue_rx(
 		  driver_device_private_data_t * private_data
 		, char * data, int len)
 {
-	printk(KERN_INFO "enqueue_rx: begin: %p, end: %p\n", (void*)private_data->rx_begin, (void*)private_data->rx_end);
-	return enqueue_packet(private_data->rx_begin, private_data->rx_end, data, len);
+	//printk(KERN_INFO "enqueue_rx: begin: %p, end: %p\n", (void*)private_data->rx_begin, (void*)private_data->rx_end);
+	//return enqueue_packet(private_data->rx_begin, private_data->rx_end, data, len);
+
+	// if (private_data->rx_packet)
+	// {
+	// 	printk(KERN_WARNING "enqueue_rx: packet already exists\n");
+	// 	return NULL;
+	// }	
+	// private_data->rx_packet = kmalloc(sizeof(driver_device_packet_t), GFP_KERNEL);
+	// private_data->rx_packet->data = data;
+	// private_data->rx_packet->len= len;
+	// return private_data->rx_packet;
+	return enqueue_packet(&private_data->rx_packet, data, len, &private_data->lock);
+}
+
+driver_device_packet_t * dequeue_packet(driver_device_packet_t ** packet_ref, spinlock_t * lock)
+{
+	unsigned long flags;
+	spin_lock_irqsave(lock, flags);
+	if (!(*packet_ref))
+	{
+		printk(KERN_WARNING "no packet in a queue\n");
+		return NULL;
+	}	
+	driver_device_packet_t * pkt = *packet_ref;
+	*packet_ref = NULL;
+	spin_unlock_irqrestore(lock, flags);
+	return pkt;
 }
 
 driver_device_packet_t * dequeue_rx(driver_device_private_data_t * private_data)
 {
-	printk(KERN_INFO "dequeue_rx: begin: %p, end: %p\n", (void*)private_data->rx_begin, (void*)private_data->rx_end);
-	return dequeue_packet(private_data->rx_begin, private_data->rx_end);
+	// printk(KERN_INFO "dequeue_rx: begin: %p, end: %p\n", (void*)private_data->rx_begin, (void*)private_data->rx_end);
+	// return dequeue_packet(private_data->rx_begin, private_data->rx_end);
+
+	// if (!private_data->rx_packet)
+	// {
+	// 	printk(KERN_WARNING "dequeue_rx: no packet\n");
+	// 	return NULL;
+	// }	
+	// driver_device_packet_t * pkt = private_data->rx_packet;
+	// private_data->rx_packet = NULL;
+	// return pkt;
+	
+	return dequeue_packet(&private_data->rx_packet, &private_data->lock);
 }
 
 driver_device_packet_t * dequeue_tx(driver_device_private_data_t * private_data)
 {
-	printk(KERN_INFO "dequeue_rx: begin: %p, end: %p\n", (void*)private_data->tx_begin, (void*)private_data->tx_end);
-	return dequeue_packet(private_data->tx_begin, private_data->tx_end);
+	// printk(KERN_INFO "dequeue_rx: begin: %p, end: %p\n", (void*)private_data->tx_begin, (void*)private_data->tx_end);
+	// return dequeue_packet(private_data->tx_begin, private_data->tx_end);
+	
+	
+	// if (!private_data->tx_packet)
+	// {
+	// 	printk(KERN_WARNING "dequeue_tx: no packet\n");
+	// 	return NULL;
+	// }	
+	// driver_device_packet_t * pkt = private_data->tx_packet;
+	// private_data->tx_packet = NULL;
+	// return pkt;
+	return dequeue_packet(&private_data->tx_packet, &private_data->lock);
 }
 
 /*
@@ -631,19 +755,19 @@ driver_device_packet_t* driver_device_get_message(net_device_t *dev)
 	device_data = 0;
 	return pkt;
 }
-/*
 int driver_device_header_hard(sk_buff_t *skb, net_device_t *dev,
 		unsigned short type, void *daddr, void *saddr, unsigned len)
 {
-	printk(KERN_INFO "header construction function");
+	printk(KERN_INFO "driver_device_header_hard");
+	printk(KERN_INFO " header construction function\n");
 
 	return 0;
 }
-*/
 
 int driver_device_rebuild_header(sk_buff_t *skb)
 {
-	printk(KERN_INFO "header rebuild function");
+	printk(KERN_INFO "driver_device_rebuild_header");
+	printk(KERN_INFO " header rebuild function\n");
 
 	return 0;
 }
